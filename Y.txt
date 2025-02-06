@@ -1,0 +1,102 @@
+import os
+import pandas as pd
+import chromadb
+from sentence_transformers import SentenceTransformer
+
+# Initialize ChromaDB and embedding model
+db = chromadb.Client()
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Directory containing CSV templates
+TEMPLATE_DIR = "path/to/your/templates"
+
+def read_and_chunk_csv(file_path):
+    """Read a CSV and chunk it by section, parameters, and values."""
+    chunks = []
+    file_name = os.path.basename(file_path)
+
+    # Read CSV without headers
+    with open(file_path, "r") as file:
+        lines = file.read().strip().split("\n")
+
+    # Chunk templates by section (3-line blocks)
+    for i in range(0, len(lines), 3):
+        if i + 2 >= len(lines):  # Ensure valid 3-line section
+            continue
+
+        section_name = lines[i].strip()
+        parameters = lines[i + 1].strip().split(", ")
+        values = lines[i + 2].strip().split(", ")
+
+        # Generate a unique document ID based on file name and section name
+        document_id = f"{file_name}::{section_name}"
+
+        # Pair parameters with values
+        for param, value in zip(parameters, values):
+            chunk_text = f"{param}: {value}"
+            chunks.append({
+                "text": chunk_text,
+                "document_id": document_id,
+                "section": section_name,
+                "parameter": param,
+                "value": value
+            })
+
+    return chunks
+
+def store_chunks(chunks):
+    """Generate embeddings and store chunks in ChromaDB."""
+    for chunk in chunks:
+        text = chunk["text"]
+        embedding = model.encode(text).tolist()
+        metadata = {
+            "document_id": chunk["document_id"],
+            "section": chunk["section"],
+            "parameter": chunk["parameter"],
+            "value": chunk["value"]
+        }
+        db.add_document(content=text, embedding=embedding, metadata=metadata)
+
+# Process all templates in the directory
+for file_name in os.listdir(TEMPLATE_DIR):
+    if file_name.endswith(".csv"):
+        file_path = os.path.join(TEMPLATE_DIR, file_name)
+        chunks = read_and_chunk_csv(file_path)
+        store_chunks(chunks)
+
+def process_query(query):
+    """Preprocesses the query into searchable terms."""
+    return [term.strip().lower() for term in query.split(",") if term.strip()]
+
+def search_chunks(query_terms):
+    """Search ChromaDB for matching chunks."""
+    results = []
+    for term in query_terms:
+        query_embedding = model.encode(term).tolist()
+        matches = db.query(query_embedding, n_results=5)
+        results.extend(matches)
+
+    # Group results by document ID
+    grouped_results = {}
+    for match in results:
+        doc_id = match.metadata["document_id"]
+        grouped_results.setdefault(doc_id, []).append(match)
+
+    return grouped_results
+
+def retrieve_full_templates(matched_docs):
+    """Display full templates for matched document sections."""
+    for doc_id in matched_docs.keys():
+        file_name, section_name = doc_id.split("::")
+        file_path = os.path.join(TEMPLATE_DIR, file_name)
+        print(f"\nMatching Section from: {file_name}, Section: {section_name}")
+        with open(file_path, "r") as f:
+            print(f.read())
+
+# Example query
+query = "conf, kil"
+query_terms = process_query(query)
+matched_docs = search_chunks(query_terms)
+
+# Retrieve and display matching full templates
+retrieve_full_templates(matched_docs)
