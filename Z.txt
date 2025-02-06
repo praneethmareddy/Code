@@ -1,0 +1,50 @@
+import chromadb
+from chromadb.config import Settings
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+
+# Sample documents (can replace with your actual documents)
+documents = [
+    "BM25 is an extension of TF-IDF that enhances document ranking.",
+    "TF-IDF stands for Term Frequency - Inverse Document Frequency.",
+    "RAG uses retrieved documents to augment a language model's output.",
+    "In machine learning, embeddings represent the semantic meaning of words."
+]
+
+# Step 1: Compute TF-IDF embeddings for documents using scikit-learn
+tfidf_vectorizer = TfidfVectorizer()
+tfidf_matrix = tfidf_vectorizer.fit_transform(documents)
+
+# Step 2: Convert the TF-IDF matrix into numpy array for compatibility with ChromaDB
+tfidf_embeddings = tfidf_matrix.toarray().astype(np.float32)
+
+# Step 3: Initialize ChromaDB client and create a collection
+client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory="./chroma"))
+collection_name = "tfidf_documents"
+collection = client.create_collection(collection_name)
+
+# Step 4: Use Chroma's from_documents method to add documents and embeddings
+collection.from_documents(
+    documents=documents,
+    embeddings=tfidf_embeddings.tolist(),
+    metadatas=[{"source": "document"}] * len(documents),  # Metadata (optional)
+    ids=[str(i) for i in range(len(documents))]  # Assign IDs to documents
+)
+
+# Step 5: Define a function to retrieve the most relevant documents based on the query
+def retrieve_from_chromadb(query, k=2):
+    # Convert the query into a TF-IDF vector
+    query_vector = tfidf_vectorizer.transform([query]).toarray().astype(np.float32)
+    
+    # Query ChromaDB for the most similar documents using cosine similarity or other metric
+    results = collection.query(
+        query_embeddings=query_vector.tolist(),
+        n_results=k
+    )
+    
+    return results['documents']
+
+# Step 6: Test the retrieval system with a sample query
+query = "What is BM25?"
+retrieved_docs = retrieve_from_chromadb(query)
+print("Retrieved Documents:", retrieved_docs)
